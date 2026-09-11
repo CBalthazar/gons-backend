@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  buyer
+  seller
+  moderator
+  admin
+}
+
+enum ModelLicense {
+  personal
+  commercial
+  extended
+}
+
+enum ModelStatus {
+  draft
+  pending
+  published
+  rejected
+}
+
+model User {
+  id           String         @id @default(uuid())
+  email        String         @unique
+  username     String         @unique
+  passwordHash String
+  avatarUrl    String?
+  roles        Role[]         @default([buyer])
+  createdAt    DateTime       @default(now())
+  models       Model[]        @relation("AuthorModels")
+  refreshTokens RefreshToken[]
+  moderationActions ModerationAction[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  family    String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([family])
+}
+
+model Model {
+  id            String       @id @default(uuid())
+  name          String
+  description   String?
+  previewKey    String?
+  fileKey       String
+  fileFormat    String       @default("glb")
+  fileSizeBytes Int?
+  priceCents    Int          @default(0)
+  currency      String       @default("EUR")
+  license       ModelLicense @default(personal)
+  tags          String[]     @default([])
+  status        ModelStatus  @default(published)
+  authorId      String
+  author        User         @relation("AuthorModels", fields: [authorId], references: [id], onDelete: Cascade)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  downloadCount Int          @default(0)
+  moderationActions ModerationAction[]
+
+  @@index([status, createdAt])
+  @@index([authorId])
+}
+
+model ModerationAction {
+  id          String      @id @default(uuid())
+  modelId     String
+  model       Model       @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  moderatorId String
+  moderator   User        @relation(fields: [moderatorId], references: [id], onDelete: Cascade)
+  decision    String
+  reason      String?
+  createdAt   DateTime    @default(now())
+
+  @@index([modelId])
+}
