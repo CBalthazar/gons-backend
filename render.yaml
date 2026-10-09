@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: gons-api
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gons-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: STORAGE_DRIVER
+        value: s3
+      - key: S3_REGION
+        value: auto
+      - key: S3_BUCKET
+        value: gons-models
+      - key: S3_FORCE_PATH_STYLE
+        value: "true"
+      # secrets / per-environment values: set in the Render dashboard
+      - key: S3_ENDPOINT        # https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+        sync: false
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: CORS_ORIGINS       # https://your-frontend.vercel.app
+        sync: false
+      - key: PUBLIC_BASE_URL    # https://gons-api.onrender.com
+        sync: false
+
+databases:
+  - name: gons-db
+    plan: free
+    databaseName: gons
+    user: gons

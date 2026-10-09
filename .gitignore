@@ -4,4 +4,5 @@ dist/
 uploads/
 *.log
 coverage/
-to-do*
+TODO*
+LEARN*
