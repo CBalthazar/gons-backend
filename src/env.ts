@@ -21,6 +21,7 @@ const envSchema = z.object({
   S3_ACCESS_KEY: z.string().optional(),
   S3_SECRET_KEY: z.string().optional(),
   S3_FORCE_PATH_STYLE: z.coerce.boolean().default(true),
+  ASSET_URL_TTL: z.coerce.number().int().positive().default(3600),
   SIGNED_URL_TTL: z.coerce.number().int().positive().default(60),
 });
 

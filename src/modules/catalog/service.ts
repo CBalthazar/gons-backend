@@ -23,13 +23,17 @@ export interface Model3D {
 
 type ModelWithAuthor = Model & { author: Pick<User, "id" | "username" | "avatarUrl"> };
 
-export function toModel3D(m: ModelWithAuthor, storage: Storage): Model3D {
+export async function toModel3D(m: ModelWithAuthor, storage: Storage): Promise<Model3D> {
+  const [previewUrl, fileUrl] = await Promise.all([
+    m.previewKey ? storage.assetUrl(m.previewKey) : undefined,
+    storage.assetUrl(m.fileKey),
+  ]);
   return {
     id: m.id,
     name: m.name,
     description: m.description ?? undefined,
-    previewUrl: m.previewKey ? storage.publicUrl(m.previewKey) : undefined,
-    fileUrl: storage.publicUrl(m.fileKey),
+    previewUrl,
+    fileUrl,
     fileFormat: m.fileFormat,
     fileSizeBytes: m.fileSizeBytes ?? undefined,
     priceCents: m.priceCents,
@@ -83,7 +87,7 @@ export async function listModels(query: CatalogQuery, storage: Storage) {
     }),
   ]);
   return {
-    items: rows.map((m) => toModel3D(m, storage)),
+    items: await Promise.all(rows.map((m) => toModel3D(m, storage))),
     total,
     page: query.page,
     pageSize: query.pageSize,

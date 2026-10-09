@@ -42,7 +42,8 @@ export function setRefreshCookie(
   reply.setCookie(env.REFRESH_COOKIE_NAME, raw, {
     httpOnly: true,
     secure: env.NODE_ENV === "production",
-    sameSite: "none",
+    // cross-site frontend (e.g. Vercel -> Render) needs "none"+Secure; plain http dev needs "lax"
+    sameSite: env.NODE_ENV === "production" ? "none" : "lax",
     path: `${env.API_PREFIX}/auth`,
     expires,
     maxAge: Math.floor((expires.getTime() - Date.now()) / 1000),
@@ -51,6 +52,9 @@ export function setRefreshCookie(
 
 export function clearRefreshCookie(reply: FastifyReply, env: Env): void {
   reply.clearCookie(env.REFRESH_COOKIE_NAME, {
+    httpOnly: true,
+    secure: env.NODE_ENV === "production",
+    sameSite: env.NODE_ENV === "production" ? "none" : "lax",
     path: `${env.API_PREFIX}/auth`,
   });
 }
