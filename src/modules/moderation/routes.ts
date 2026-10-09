@@ -19,7 +19,7 @@ export async function moderationRoutes(app: FastifyInstance, _env: unknown, stor
         orderBy: { createdAt: "asc" },
         take: 100,
       });
-      return reply.send({ items: rows.map((m) => toModel3D(m, storage)), total: rows.length });
+      return reply.send({ items: await Promise.all(rows.map((m) => toModel3D(m, storage))), total: rows.length });
     },
   );
 
@@ -45,7 +45,7 @@ export async function moderationRoutes(app: FastifyInstance, _env: unknown, stor
             reason,
           },
         });
-        return reply.send(toModel3D(updated, storage));
+        return reply.send(await toModel3D(updated, storage));
       },
     );
   }

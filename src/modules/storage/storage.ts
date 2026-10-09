@@ -6,7 +6,8 @@ import type { Env } from "../../env.js";
 
 export interface Storage {
   save(key: string, body: Buffer, contentType: string): Promise<void>;
-  publicUrl(key: string): string;
+  /** URL the browser can load for a stored object (presigned for S3, so the bucket stays private). */
+  assetUrl(key: string): Promise<string>;
   signedDownloadUrl(key: string, filename: string): Promise<string>;
   readPath?(key: string): string;
 }
@@ -42,10 +43,11 @@ export function buildStorage(env: Env): Storage {
           Bucket: env.S3_BUCKET, Key: key, Body: body, ContentType: contentType,
         }));
       },
-      publicUrl: (key) =>
-        env.S3_ENDPOINT
-          ? `${env.S3_ENDPOINT}/${env.S3_BUCKET}/${key}`
-          : `s3://${env.S3_BUCKET}/${key}`,
+      async assetUrl(key) {
+        return getSignedUrl(client, new GetObjectCommand({
+          Bucket: env.S3_BUCKET, Key: key,
+        }), { expiresIn: env.ASSET_URL_TTL });
+      },
       async signedDownloadUrl(key, filename) {
         return getSignedUrl(client, new GetObjectCommand({
           Bucket: env.S3_BUCKET, Key: key,
@@ -61,10 +63,12 @@ export function buildStorage(env: Env): Storage {
       await fs.mkdir(path.dirname(path.join(dir, key)), { recursive: true });
       await fs.writeFile(path.join(dir, key), body);
     },
-    publicUrl: (key) => `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/uploads/${key}`,
+    async assetUrl(key) {
+      return `${env.PUBLIC_BASE_URL.replace(/\/$/, "")}/uploads/${key}`;
+    },
     async signedDownloadUrl(key) {
       // Local driver: auth already checked by route; short TTL enforced via signed query is skipped in dev.
-      return this.publicUrl(key);
+      return this.assetUrl(key);
     },
     readPath: (key) => path.join(dir, key),
   };

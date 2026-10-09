@@ -116,7 +116,7 @@ export async function catalogRoutes(app: FastifyInstance, env: Env, storage: Sto
         include: { author: { select: { id: true, username: true, avatarUrl: true } } },
       });
       const { toModel3D } = await import("./service.js");
-      return reply.code(201).send(toModel3D(created, storage));
+      return reply.code(201).send(await toModel3D(created, storage));
     },
   );
 }
