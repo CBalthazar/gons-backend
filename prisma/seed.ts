@@ -1,27 +1,63 @@
 import { promises as fs } from "node:fs";
-import path from "node:path";
+import * as path from "node:path";
 import argon2 from "argon2";
 import { PrismaClient, type Role } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-const USERS: { email: string; username: string; password: string; roles: Role[] }[] = [
-  { email: "buyer@gons.test", username: "buyer", password: "Buyer1234", roles: ["buyer"] },
-  { email: "seller@gons.test", username: "seller", password: "Seller1234", roles: ["buyer", "seller"] },
-  { email: "mod@gons.test", username: "mod", password: "Mod12345", roles: ["buyer", "moderator"] },
-  { email: "admin@gons.test", username: "admin", password: "Admin1234", roles: ["buyer", "seller", "moderator", "admin"] },
+const USERS: {
+  email: string;
+  username: string;
+  password: string;
+  roles: Role[];
+}[] = [
+  {
+    email: "buyer@gons.test",
+    username: "buyer",
+    password: "Buyer1234",
+    roles: ["buyer"],
+  },
+  {
+    email: "seller@gons.test",
+    username: "seller",
+    password: "Seller1234",
+    roles: ["buyer", "seller"],
+  },
+  {
+    email: "mod@gons.test",
+    username: "mod",
+    password: "Mod12345",
+    roles: ["buyer", "moderator"],
+  },
+  {
+    email: "admin@gons.test",
+    username: "admin",
+    password: "Admin1234",
+    roles: ["buyer", "seller", "moderator", "admin"],
+  },
 ];
 
 async function main(): Promise<void> {
-  for (const u of USERS) {
-    const passwordHash = await argon2.hash(u.password, { type: argon2.argon2id });
-    await prisma.user.upsert({
-      where: { email: u.email },
-      update: { username: u.username, passwordHash, roles: u.roles },
-      create: { email: u.email, username: u.username, passwordHash, roles: u.roles },
-    });
-  }
-  const seller = await prisma.user.findUnique({ where: { email: "seller@gons.test" } });
+  await Promise.all(
+    USERS.map(async (u) => {
+      const passwordHash = await argon2.hash(u.password, {
+        type: argon2.argon2id,
+      });
+      await prisma.user.upsert({
+        where: { email: u.email },
+        update: { username: u.username, passwordHash, roles: u.roles },
+        create: {
+          email: u.email,
+          username: u.username,
+          passwordHash,
+          roles: u.roles,
+        },
+      });
+    }),
+  );
+  const seller = await prisma.user.findUnique({
+    where: { email: "seller@gons.test" },
+  });
   if (!seller) throw new Error("seed: seller missing");
 
   // Copy Khronos CC0 fixtures from frontend for local-driver dev.
@@ -30,13 +66,19 @@ async function main(): Promise<void> {
     { src: "../frontend/public/models/Duck.glb", key: "models/duck.glb" },
     { src: "../frontend/public/models/Fox.glb", key: "models/fox.glb" },
   ];
-  for (const f of fixtures) {
-    try {
-      const buf = await fs.readFile(path.resolve(f.src));
-      await fs.mkdir(path.dirname(path.join(uploadDir, f.key)), { recursive: true });
-      await fs.writeFile(path.join(uploadDir, f.key), buf);
-    } catch { /* fixtures optional in CI */ }
-  }
+  await Promise.all(
+    fixtures.map(async (f) => {
+      try {
+        const buf = await fs.readFile(path.resolve(f.src));
+        await fs.mkdir(path.dirname(path.join(uploadDir, f.key)), {
+          recursive: true,
+        });
+        await fs.writeFile(path.join(uploadDir, f.key), buf);
+      } catch {
+        /* fixtures optional in CI */
+      }
+    }),
+  );
 
   const count = await prisma.model.count();
   if (count === 0) {
@@ -88,5 +130,8 @@ async function statSafe(p: string): Promise<number | null> {
 }
 
 main()
-  .catch((e) => { console.error(e); process.exit(1); })
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
   .finally(() => prisma.$disconnect());

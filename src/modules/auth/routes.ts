@@ -13,10 +13,11 @@ import {
 import { requireAuth } from "./guards.js";
 import { unauthorized } from "../../common/errors.js";
 
-export async function authRoutes(app: FastifyInstance, env: Env): Promise<void> {
+export function authRoutes(app: FastifyInstance, env: Env): void {
   app.post("/auth/register", async (req, reply) => {
     const body = registerSchema.parse(req.body);
-    const { user, accessToken, refreshRaw, refreshExpires } = await registerUser(env, body);
+    const { user, accessToken, refreshRaw, refreshExpires } =
+      await registerUser(env, body);
     setRefreshCookie(reply, env, refreshRaw, refreshExpires);
     return reply.code(201).send({ user, accessToken });
   });
@@ -24,7 +25,9 @@ export async function authRoutes(app: FastifyInstance, env: Env): Promise<void> 
   app.post("/auth/login", async (req, reply) => {
     const body = loginSchema.parse(req.body);
     const { user, accessToken, refreshRaw, refreshExpires } = await loginUser(
-      env, body.identifier, body.password,
+      env,
+      body.identifier,
+      body.password,
     );
     setRefreshCookie(reply, env, refreshRaw, refreshExpires);
     return reply.send({ user, accessToken });

@@ -10,13 +10,20 @@ import { ZodError } from "zod";
 import { loadEnv, corsOrigins, type Env } from "./env.js";
 import { buildLogger } from "./common/logger.js";
 import { HttpError } from "./common/errors.js";
-import { buildStorage } from "./modules/storage/storage.js";
+import {
+  buildStorage,
+  isPrivateKey,
+  verifyLocalSignature,
+} from "./modules/storage/storage.js";
 import { authRoutes } from "./modules/auth/routes.js";
 import { catalogRoutes } from "./modules/catalog/routes.js";
 import { moderationRoutes } from "./modules/moderation/routes.js";
+import { sellerRoutes } from "./modules/seller/routes.js";
 
 export async function buildApp(env: Env = loadEnv()): Promise<FastifyInstance> {
-  const app = Fastify({ loggerInstance: buildLogger(env.NODE_ENV === "development") });
+  const app = Fastify({
+    loggerInstance: buildLogger(env.NODE_ENV === "development"),
+  });
 
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(cors, {
@@ -35,25 +42,33 @@ export async function buildApp(env: Env = loadEnv()): Promise<FastifyInstance> {
       servers: [{ url: env.API_PREFIX }],
     },
   });
-  await app.register(swaggerUi, { routePrefix: "/docs" });
+  // API docs are a dev aid: not exposed in production.
+  if (env.NODE_ENV !== "production") {
+    await app.register(swaggerUi, { routePrefix: "/docs" });
+  }
 
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof ZodError) {
-      return reply.code(400).send({ message: "Validation failed", issues: err.issues });
+      return reply
+        .code(400)
+        .send({ message: "Validation failed", issues: err.issues });
     }
     if (err instanceof HttpError) {
       return reply.code(err.status).send({ message: err.message });
     }
-    const status = (err as { status?: number; statusCode?: number }).status ??
+    const status =
+      (err as { status?: number; statusCode?: number }).status ??
       (err as { statusCode?: number }).statusCode;
     if (typeof status === "number" && status >= 400 && status < 500) {
-      return reply.code(status).send({ message: (err as Error).message || "Request error" });
+      return reply
+        .code(status)
+        .send({ message: (err as Error).message || "Request error" });
     }
     app.log.error(err);
     return reply.code(500).send({ message: "Internal server error" });
   });
 
-  app.get("/health", async () => ({ ok: true }));
+  app.get("/health", () => ({ ok: true }));
 
   const storage = buildStorage(env);
 
@@ -65,13 +80,32 @@ export async function buildApp(env: Env = loadEnv()): Promise<FastifyInstance> {
       const path = await import("node:path");
       const { createReadStream } = await import("node:fs");
       const key = (req.params as { "*": string })["*"];
-      if (key.includes("..")) return reply.code(400).send({ message: "Bad path" });
+      if (key.includes(".."))
+        return reply.code(400).send({ message: "Bad path" });
+      if (isPrivateKey(key)) {
+        const { exp, sig } = req.query as { exp?: string; sig?: string };
+        if (!verifyLocalSignature(env.JWT_SECRET, key, exp, sig)) {
+          return reply.code(403).send({ message: "Invalid or expired link" });
+        }
+      }
       const file = path.resolve(env.UPLOAD_DIR, key);
       try {
         const stat = await fs.stat(file);
-        if (!stat.isFile()) return reply.code(404).send({ message: "Not found" });
+        if (!stat.isFile())
+          return reply.code(404).send({ message: "Not found" });
         const ext = path.extname(file).toLowerCase();
-        const type = ext === ".glb" ? "model/gltf-binary" : ext === ".png" ? "image/png" : "application/octet-stream";
+
+        let type;
+        switch (ext) {
+          case ".glb":
+            type = "model/gltf-binary";
+            break;
+          case ".png":
+            type = "image/png";
+            break;
+          default:
+            type = "application/octet-stream";
+        }
         reply.header("Content-Type", type).header("Content-Length", stat.size);
         reply.header("Access-Control-Allow-Origin", "*");
         return reply.send(createReadStream(file));
@@ -85,12 +119,19 @@ export async function buildApp(env: Env = loadEnv()): Promise<FastifyInstance> {
   await app.register(
     async (scoped) => {
       await scoped.register(rateLimit, { max: 20, timeWindow: "1 minute" });
-      await authRoutes(scoped, env);
+      authRoutes(scoped, env);
     },
     { prefix: env.API_PREFIX },
   );
-  await app.register(async (scoped) => catalogRoutes(scoped, env, storage), { prefix: env.API_PREFIX });
-  await app.register(async (scoped) => moderationRoutes(scoped, env, storage), { prefix: env.API_PREFIX });
+  await app.register((scoped) => catalogRoutes(scoped, env, storage), {
+    prefix: env.API_PREFIX,
+  });
+  await app.register((scoped) => sellerRoutes(scoped), {
+    prefix: env.API_PREFIX,
+  });
+  await app.register((scoped) => moderationRoutes(scoped, env, storage), {
+    prefix: env.API_PREFIX,
+  });
 
   return app;
 }

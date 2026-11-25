@@ -2,15 +2,23 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Env } from "../../env.js";
 import { requireAuth, requireRole } from "../auth/guards.js";
-import { catalogQuerySchema, parseTags, uploadFieldsSchema } from "./schemas.js";
-import { getModel, listModels } from "./service.js";
+import {
+  catalogQuerySchema,
+  parseTags,
+  uploadFieldsSchema,
+} from "./schemas.js";
+import { canAccessFile, getModel, listModels } from "./service.js";
 import { assertValidGlb, type Storage } from "../storage/storage.js";
 import { prisma } from "../../common/prisma.js";
-import { badRequest } from "../../common/errors.js";
+import { badRequest, forbidden, notFound } from "../../common/errors.js";
 
 const GLB_MIME = "model/gltf-binary";
 
-export async function catalogRoutes(app: FastifyInstance, env: Env, storage: Storage): Promise<void> {
+export function catalogRoutes(
+  app: FastifyInstance,
+  env: Env,
+  storage: Storage,
+): void {
   app.get("/models", async (req, reply) => {
     const query = catalogQuerySchema.parse(req.query);
     return reply.send(await listModels(query, storage));
@@ -27,25 +35,90 @@ export async function catalogRoutes(app: FastifyInstance, env: Env, storage: Sto
         const { verifyAccessToken } = await import("../auth/tokens.js");
         const p = await verifyAccessToken(header.slice(7));
         viewer = { userId: p.sub, roles: p.roles };
-      } catch { /* remain anonymous */ }
+      } catch {
+        /* remain anonymous */
+      }
     }
     return reply.send(await getModel(id, storage, viewer));
   });
 
-  // Auth-gated download: checks license/status then returns short-lived URL.
-  // Frontend migrates Download button from raw fileUrl to this endpoint.
-  app.get("/models/:id/download", { preHandler: requireAuth }, async (req, reply) => {
-    const { id } = req.params as { id: string };
+  const findPublished = async (id: string) => {
     const m = await prisma.model.findUnique({ where: { id } });
-    if (!m || m.status !== "published") {
-      const { notFound } = await import("../../common/errors.js");
-      throw notFound("Model not found");
-    }
-    await prisma.model.update({ where: { id }, data: { downloadCount: { increment: 1 } } });
-    const filename = `${m.name.replace(/[^\w\-]+/g, "_")}.glb`;
-    const url = await storage.signedDownloadUrl(m.fileKey, filename);
-    return reply.send({ url });
-  });
+    if (m?.status !== "published") throw notFound("Model not found");
+    return m;
+  };
+
+  // Simulated purchase (no payment provider yet): records ownership. Free models are claimed at no cost.
+  app.post(
+    "/models/:id/purchase",
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const m = await findPublished(id);
+      if (m.authorId === req.auth!.userId)
+        return reply.send({ modelId: id, owned: true });
+      const purchase = await prisma.purchase.upsert({
+        where: { userId_modelId: { userId: req.auth!.userId, modelId: id } },
+        update: {},
+        create: {
+          userId: req.auth!.userId,
+          modelId: id,
+          pricePaidCents: m.priceCents,
+          currency: m.currency,
+        },
+      });
+      return reply.code(201).send({
+        id: purchase.id,
+        modelId: id,
+        createdAt: purchase.createdAt.toISOString(),
+      });
+    },
+  );
+
+  // Entitled 3D preview: short-lived URL to the GLB for the viewer. Not counted as a download.
+  app.get(
+    "/models/:id/view",
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const m = await prisma.model.findUnique({ where: { id } });
+      if (!m) throw notFound("Model not found");
+      const isStaff = req.auth!.roles.some(
+        (r) => r === "admin" || r === "moderator",
+      );
+      if (
+        m.status !== "published" &&
+        m.authorId !== req.auth!.userId &&
+        !isStaff
+      )
+        throw notFound("Model not found");
+      if (!(await canAccessFile(m, req.auth!)))
+        throw forbidden("Purchase required");
+      return reply.send({ url: await storage.signedViewUrl(m.fileKey) });
+    },
+  );
+
+  // Entitled download: requires ownership (purchase), authorship, or staff role.
+  app.get(
+    "/models/:id/download",
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const m = await findPublished(id);
+      if (!(await canAccessFile(m, req.auth!)))
+        throw forbidden("Purchase required");
+      if (m.authorId !== req.auth!.userId) {
+        await prisma.model.update({
+          where: { id },
+          data: { downloadCount: { increment: 1 } },
+        });
+      }
+      const filename = `${m.name.replace(/[^\w-]+/g, "_")}.glb`;
+      return reply.send({
+        url: await storage.signedDownloadUrl(m.fileKey, filename),
+      });
+    },
+  );
 
   app.post(
     "/models",
@@ -54,7 +127,7 @@ export async function catalogRoutes(app: FastifyInstance, env: Env, storage: Sto
       const parts = req.parts();
       const fields: Record<string, string> = {};
       let fileBuf: Buffer | null = null;
-      let fileMime = GLB_MIME;
+      // let fileMime = GLB_MIME;
       let previewBuf: Buffer | null = null;
       let previewMime = "image/png";
 
@@ -63,7 +136,7 @@ export async function catalogRoutes(app: FastifyInstance, env: Env, storage: Sto
           const buf = await part.toBuffer();
           if (part.fieldname === "file") {
             fileBuf = buf;
-            fileMime = part.mimetype || GLB_MIME;
+            // fileMime = part.mimetype || GLB_MIME;
           } else if (part.fieldname === "preview") {
             previewBuf = buf;
             previewMime = part.mimetype || previewMime;
@@ -90,7 +163,6 @@ export async function catalogRoutes(app: FastifyInstance, env: Env, storage: Sto
       const id = randomUUID();
       const fileKey = `models/${id}.glb`;
       await storage.save(fileKey, fileBuf, GLB_MIME);
-      void fileMime;
       let previewKey: string | undefined;
       if (previewBuf) {
         previewKey = `previews/${id}`;
@@ -101,8 +173,8 @@ export async function catalogRoutes(app: FastifyInstance, env: Env, storage: Sto
         data: {
           id,
           name: parsed.name,
-          description: parsed.description,
-          previewKey,
+          description: parsed.description ?? null,
+          previewKey: previewKey ?? null,
           fileKey,
           fileFormat: "glb",
           fileSizeBytes: fileBuf.length,
@@ -113,7 +185,9 @@ export async function catalogRoutes(app: FastifyInstance, env: Env, storage: Sto
           status: "pending",
           authorId: req.auth!.userId,
         },
-        include: { author: { select: { id: true, username: true, avatarUrl: true } } },
+        include: {
+          author: { select: { id: true, username: true, avatarUrl: true } },
+        },
       });
       const { toModel3D } = await import("./service.js");
       return reply.code(201).send(await toModel3D(created, storage));

@@ -8,18 +8,27 @@ import { toModel3D } from "../catalog/service.js";
 
 const decisionSchema = z.object({ reason: z.string().max(2000).optional() });
 
-export async function moderationRoutes(app: FastifyInstance, _env: unknown, storage: Storage): Promise<void> {
+export function moderationRoutes(
+  app: FastifyInstance,
+  _env: unknown,
+  storage: Storage,
+): void {
   app.get(
     "/moderation/queue",
     { preHandler: [requireAuth, requireRole("moderator", "admin")] },
     async (_req, reply) => {
       const rows = await prisma.model.findMany({
         where: { status: "pending" },
-        include: { author: { select: { id: true, username: true, avatarUrl: true } } },
+        include: {
+          author: { select: { id: true, username: true, avatarUrl: true } },
+        },
         orderBy: { createdAt: "asc" },
         take: 100,
       });
-      return reply.send({ items: await Promise.all(rows.map((m) => toModel3D(m, storage))), total: rows.length });
+      return reply.send({
+        items: await Promise.all(rows.map((m) => toModel3D(m, storage))),
+        total: rows.length,
+      });
     },
   );
 
@@ -35,14 +44,16 @@ export async function moderationRoutes(app: FastifyInstance, _env: unknown, stor
         const updated = await prisma.model.update({
           where: { id },
           data: { status: decision === "approve" ? "published" : "rejected" },
-          include: { author: { select: { id: true, username: true, avatarUrl: true } } },
+          include: {
+            author: { select: { id: true, username: true, avatarUrl: true } },
+          },
         });
         await prisma.moderationAction.create({
           data: {
             modelId: id,
             moderatorId: req.auth!.userId,
             decision,
-            reason,
+            reason: reason ?? null,
           },
         });
         return reply.send(await toModel3D(updated, storage));

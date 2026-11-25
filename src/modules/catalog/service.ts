@@ -9,7 +9,6 @@ export interface Model3D {
   name: string;
   description?: string;
   previewUrl?: string;
-  fileUrl: string;
   fileFormat: string;
   fileSizeBytes?: number;
   priceCents: number;
@@ -21,21 +20,25 @@ export interface Model3D {
   updatedAt: string;
 }
 
-type ModelWithAuthor = Model & { author: Pick<User, "id" | "username" | "avatarUrl"> };
+type ModelWithAuthor = Model & {
+  author: Pick<User, "id" | "username" | "avatarUrl">;
+};
 
-export async function toModel3D(m: ModelWithAuthor, storage: Storage): Promise<Model3D> {
-  const [previewUrl, fileUrl] = await Promise.all([
-    m.previewKey ? storage.assetUrl(m.previewKey) : undefined,
-    storage.assetUrl(m.fileKey),
-  ]);
+export async function toModel3D(
+  m: ModelWithAuthor,
+  storage: Storage,
+): Promise<Model3D> {
+  // The full model file is private: never expose a URL to it here (see /models/:id/view and /download).
+  const previewUrl = m.previewKey
+    ? await storage.assetUrl(m.previewKey)
+    : undefined;
   return {
     id: m.id,
     name: m.name,
-    description: m.description ?? undefined,
-    previewUrl,
-    fileUrl,
+    description: m.description ?? "",
+    previewUrl: previewUrl ?? "",
     fileFormat: m.fileFormat,
-    fileSizeBytes: m.fileSizeBytes ?? undefined,
+    fileSizeBytes: m.fileSizeBytes ?? 0,
     priceCents: m.priceCents,
     currency: m.currency,
     license: m.license,
@@ -43,7 +46,7 @@ export async function toModel3D(m: ModelWithAuthor, storage: Storage): Promise<M
     author: {
       id: m.author.id,
       username: m.author.username,
-      avatarUrl: m.author.avatarUrl ?? undefined,
+      avatarUrl: m.author.avatarUrl ?? "",
     },
     createdAt: m.createdAt.toISOString(),
     updatedAt: m.updatedAt.toISOString(),
@@ -52,11 +55,18 @@ export async function toModel3D(m: ModelWithAuthor, storage: Storage): Promise<M
 
 const orderByFor = (sort: CatalogQuery["sort"]) => {
   switch (sort) {
-    case "newest": return [{ createdAt: "desc" as const }];
-    case "price-asc": return [{ priceCents: "asc" as const }];
-    case "price-desc": return [{ priceCents: "desc" as const }];
+    case "newest":
+      return [{ createdAt: "desc" as const }];
+    case "price-asc":
+      return [{ priceCents: "asc" as const }];
+    case "price-desc":
+      return [{ priceCents: "desc" as const }];
     case "trending":
-    default: return [{ downloadCount: "desc" as const }, { createdAt: "desc" as const }];
+    default:
+      return [
+        { downloadCount: "desc" as const },
+        { createdAt: "desc" as const },
+      ];
   }
 };
 
@@ -80,7 +90,9 @@ export async function listModels(query: CatalogQuery, storage: Storage) {
     prisma.model.count({ where }),
     prisma.model.findMany({
       where,
-      include: { author: { select: { id: true, username: true, avatarUrl: true } } },
+      include: {
+        author: { select: { id: true, username: true, avatarUrl: true } },
+      },
       orderBy: orderByFor(query.sort),
       skip: (query.page - 1) * query.pageSize,
       take: query.pageSize,
@@ -94,14 +106,40 @@ export async function listModels(query: CatalogQuery, storage: Storage) {
   };
 }
 
-export async function getModel(id: string, storage: Storage, viewer?: { userId: string; roles: string[] }) {
+export async function getModel(
+  id: string,
+  storage: Storage,
+  viewer?: { userId: string; roles: string[] },
+) {
   const m = await prisma.model.findUnique({
     where: { id },
-    include: { author: { select: { id: true, username: true, avatarUrl: true } } },
+    include: {
+      author: { select: { id: true, username: true, avatarUrl: true } },
+    },
   });
   if (!m) throw notFound("Model not found");
   const canSeeNonPublished =
-    viewer && (viewer.userId === m.authorId || viewer.roles.includes("moderator") || viewer.roles.includes("admin"));
-  if (m.status !== "published" && !canSeeNonPublished) throw notFound("Model not found");
+    viewer &&
+    (viewer.userId === m.authorId ||
+      viewer.roles.includes("moderator") ||
+      viewer.roles.includes("admin"));
+  if (m.status !== "published" && !canSeeNonPublished)
+    throw notFound("Model not found");
   return toModel3D(m, storage);
+}
+
+/** Who may fetch the full file: author, moderators/admins, buyers; free models are open to any signed-in user. */
+export async function canAccessFile(
+  m: Pick<Model, "id" | "authorId" | "priceCents">,
+  viewer: { userId: string; roles: string[] },
+): Promise<boolean> {
+  if (m.authorId === viewer.userId) return true;
+  if (viewer.roles.includes("admin") || viewer.roles.includes("moderator"))
+    return true;
+  if (m.priceCents === 0) return true;
+  const p = await prisma.purchase.findUnique({
+    where: { userId_modelId: { userId: viewer.userId, modelId: m.id } },
+    select: { id: true },
+  });
+  return p !== null;
 }

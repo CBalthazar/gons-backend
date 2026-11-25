@@ -6,9 +6,13 @@ COPY . .
 RUN npx prisma generate && npm run build
 
 FROM node:22-alpine
+RUN addgroup -S nonroot \
+    && adduser -S nonroot -G nonroot
+USER nonroot
+
 WORKDIR /app
 ENV NODE_ENV=production
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json ./
 # keep the full node_modules (incl. generated Prisma client + prisma CLI for `migrate deploy`)
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

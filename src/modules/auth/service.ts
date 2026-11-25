@@ -29,7 +29,7 @@ export const toPublicUser = (u: {
   email: u.email,
   username: u.username,
   roles: u.roles,
-  avatarUrl: u.avatarUrl ?? undefined,
+  avatarUrl: u.avatarUrl ?? null,
   createdAt: u.createdAt.toISOString(),
 });
 

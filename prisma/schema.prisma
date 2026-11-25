@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 enum Role {
@@ -28,65 +27,105 @@ enum ModelStatus {
 }
 
 model User {
-  id           String         @id @default(uuid())
-  email        String         @unique
-  username     String         @unique
-  passwordHash String
-  avatarUrl    String?
-  roles        Role[]         @default([buyer])
-  createdAt    DateTime       @default(now())
-  models       Model[]        @relation("AuthorModels")
-  refreshTokens RefreshToken[]
-  moderationActions ModerationAction[]
+  id                    String             @id @default(uuid())
+  email                 String             @unique
+  username              String             @unique
+  passwordHash          String
+  avatarUrl             String?
+  roles                 Role[]             @default([buyer])
+  createdAt             DateTime           @default(now())
+  models                Model[]            @relation("AuthorModels")
+  refreshTokens         RefreshToken[]
+  moderationActions     ModerationAction[]
+  purchases             Purchase[]
+  sellerRequests        SellerRequest[]    @relation("RequestUser")
+  decidedSellerRequests SellerRequest[]    @relation("RequestDecider")
 }
 
 model RefreshToken {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash String   @unique
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
   family    String
   expiresAt DateTime
   revokedAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   @@index([userId])
   @@index([family])
 }
 
 model Model {
-  id            String       @id @default(uuid())
-  name          String
-  description   String?
-  previewKey    String?
-  fileKey       String
-  fileFormat    String       @default("glb")
-  fileSizeBytes Int?
-  priceCents    Int          @default(0)
-  currency      String       @default("EUR")
-  license       ModelLicense @default(personal)
-  tags          String[]     @default([])
-  status        ModelStatus  @default(published)
-  authorId      String
-  author        User         @relation("AuthorModels", fields: [authorId], references: [id], onDelete: Cascade)
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  downloadCount Int          @default(0)
+  id                String             @id @default(uuid())
+  name              String
+  description       String?
+  previewKey        String?
+  fileKey           String
+  fileFormat        String             @default("glb")
+  fileSizeBytes     Int?
+  priceCents        Int                @default(0)
+  currency          String             @default("EUR")
+  license           ModelLicense       @default(personal)
+  tags              String[]           @default([])
+  status            ModelStatus        @default(published)
+  authorId          String
+  author            User               @relation("AuthorModels", fields: [authorId], references: [id], onDelete: Cascade)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  downloadCount     Int                @default(0)
   moderationActions ModerationAction[]
+  purchases         Purchase[]
 
   @@index([status, createdAt])
   @@index([authorId])
 }
 
 model ModerationAction {
-  id          String      @id @default(uuid())
+  id          String   @id @default(uuid())
   modelId     String
-  model       Model       @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model       Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
   moderatorId String
-  moderator   User        @relation(fields: [moderatorId], references: [id], onDelete: Cascade)
+  moderator   User     @relation(fields: [moderatorId], references: [id], onDelete: Cascade)
   decision    String
   reason      String?
-  createdAt   DateTime    @default(now())
+  createdAt   DateTime @default(now())
 
   @@index([modelId])
+}
+
+model Purchase {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelId        String
+  model          Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  pricePaidCents Int
+  currency       String
+  createdAt      DateTime @default(now())
+
+  @@unique([userId, modelId])
+  @@index([modelId])
+}
+
+enum SellerRequestStatus {
+  pending
+  approved
+  rejected
+}
+
+model SellerRequest {
+  id        String              @id @default(uuid())
+  userId    String
+  user      User                @relation("RequestUser", fields: [userId], references: [id], onDelete: Cascade)
+  message   String?
+  status    SellerRequestStatus @default(pending)
+  deciderId String?
+  decider   User?               @relation("RequestDecider", fields: [deciderId], references: [id], onDelete: SetNull)
+  reason    String?
+  createdAt DateTime            @default(now())
+  decidedAt DateTime?
+
+  @@index([userId])
+  @@index([status, createdAt])
 }
